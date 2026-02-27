@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Elayon PSI-Q • Psicólogo</title>
+  <meta name="theme-color" content="#dff4f6" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <div class="logo">
+          <img src="./IMG-20260218-WA0015.jpg" alt="Elayon" />
+        </div>
+        <div>
+          <h1>Elayon PSI-Q</h1>
+          <p>Área do Psicólogo • Revisão técnica</p>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="link" href="./index.html">Coleta</a>
+        <a class="link" href="./secretaria.html">Área da Secretaria</a>
+      </nav>
+    </header>
+
+    <main class="card">
+      <h2>Identificação do psicólogo</h2>
+      <p class="muted">Esta identificação fica local. Serve apenas para organizar a revisão e o relatório.</p>
+
+      <section class="grid2">
+        <div>
+          <label>Nome do psicólogo</label>
+          <input id="psyName" placeholder="Ex.: Dra. (Nome)" />
+        </div>
+        <div>
+          <label>CRP</label>
+          <input id="psyCrp" placeholder="Ex.: CRP 00/00000" />
+        </div>
+      </section>
+
+      <div class="btns">
+        <button id="btnSavePsy" class="primary">Salvar</button>
+        <button id="btnReload" class="ghost">Recarregar sessões</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <h2>Sessões coletadas</h2>
+      <p class="muted">
+        Aqui o psicólogo tem acesso ao máximo possível do material (inclui áudio), antes de qualquer decisão externa.
+      </p>
+
+      <div id="list" class="list"></div>
+
+      <div class="divider"></div>
+
+      <h2>Gerar relatório anonimizador (para Secretaria)</h2>
+      <p class="muted">
+        O relatório abaixo contém apenas metadados. <b>Sem nome</b>. <b>Sem áudio</b>. A decisão é do psicólogo.
+      </p>
+
+      <div class="btns">
+        <button id="btnBuild" class="primary">Gerar JSON</button>
+        <button id="btnCopy" class="ghost disabled">Copiar</button>
+        <button id="btnDownload" class="ghost disabled">Baixar</button>
+      </div>
+
+      <textarea id="out" placeholder="O JSON anonimizador aparece aqui…"></textarea>
+    </main>
+
+    <footer class="foot">
+      <span>Elayon PSI-Q • Revisão técnica com sigilo</span>
+      <span class="right">Sua paz foi ouvida. ✨</span>
+    </footer>
+  </div>
+
+  <script defer src="./app.js"></script>
+</body>
+</html>
