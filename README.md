@@ -24,11 +24,3 @@ Uma ferramenta simples e prática para **escuta simbólica** com foco humanitár
 ## Sigilo e ética
 - O app foi projetado para **minimizar exposição**: a coleta fica local; o envio externo é decisão do psicólogo.
 - O relatório para secretaria **não contém nome, não contém áudio**, apenas metadados.
-
-## GitHub Pages
-Ative em: Settings → Pages → Deploy from branch → **main** / **root**.
-
-Arquivos:
-- `index.html` (coleta)
-- `psicologo.html` (revisão + export anon.)
-- `secretaria.html` (visualização de relatório anon.)
