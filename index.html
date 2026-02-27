@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Elayon PSI-Q • Coleta</title>
+  <meta name="theme-color" content="#dff4f6" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <div class="logo">
+          <img src="./IMG-20260218-WA0015.jpg" alt="Elayon" />
+        </div>
+        <div>
+          <h1>Elayon PSI-Q</h1>
+          <p>Coleta • Escuta simbólica com ética e sigilo</p>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="link" href="./psicologo.html">Área do Psicólogo</a>
+        <a class="link" href="./secretaria.html">Área da Secretaria</a>
+      </nav>
+    </header>
+
+    <main class="card">
+      <h2>Iniciar sessão</h2>
+      <p class="muted">
+        Esta sessão é breve e respeitosa. O objetivo é registrar uma escuta simples e segura.
+        <br><b>Sigilo:</b> o áudio fica no dispositivo. O psicólogo decide se gera metadados anonimizados.
+      </p>
+
+      <section class="grid2">
+        <div>
+          <label>Identificação do Responsável Técnico (local)</label>
+          <input id="rtId" placeholder="Ex.: RT-021 (fictício)" />
+        </div>
+        <div>
+          <label>Local / Comunidade (opcional)</label>
+          <input id="local" placeholder="Ex.: Comunidade X" />
+        </div>
+      </section>
+
+      <section class="rules">
+        <h3>Regras básicas (ler em voz clara antes de começar)</h3>
+        <ul>
+          <li>Você pode parar a qualquer momento.</li>
+          <li>Não é prova. É um espaço de fala breve e respeitosa.</li>
+          <li>O que for dito é tratado com sigilo e responsabilidade técnica.</li>
+          <li>O psicólogo responsável avaliará a necessidade de próximos passos.</li>
+        </ul>
+      </section>
+
+      <section class="session">
+        <div class="row">
+          <div class="badge">Status: <b id="status">pronto</b></div>
+          <div class="badge">Atualização: <b>200ms</b></div>
+          <div class="badge">Tempo: <b id="clock">00:00</b> / 02:00</div>
+        </div>
+
+        <div class="btns">
+          <button id="btnMic" class="primary">Ativar microfone</button>
+          <button id="btnRec" class="ghost disabled">Iniciar escuta (2 min)</button>
+          <button id="btnStop" class="danger disabled">Finalizar</button>
+          <button id="btnClear" class="ghost">Limpar campos</button>
+        </div>
+
+        <p class="muted" id="hint">Ambiente calmo ajuda. Fale no seu ritmo.</p>
+
+        <div class="bars">
+          <h3>Barras de presença (durante a fala)</h3>
+          <p class="muted">Sobem com continuidade e presença. Ao entrar silêncio, começam a descer.</p>
+
+          <div class="barList" id="barList"></div>
+        </div>
+
+        <div class="endBox hide" id="endBox">
+          <h3>Encerramento</h3>
+          <p id="endMsg" class="endMsg"></p>
+          <div class="btns">
+            <button id="btnGoPsy" class="primary">Ir para Área do Psicólogo</button>
+            <button id="btnNew" class="ghost">Nova sessão</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>Elayon PSI-Q • Sigilo e responsabilidade • Uso humanitário</span>
+      <span class="right">Sua paz foi ouvida. ✨</span>
+    </footer>
+  </div>
+
+  <script defer src="./app.js"></script>
+</body>
+</html>
