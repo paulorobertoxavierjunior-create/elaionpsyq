@@ -1,56 +1,92 @@
 /**
- * ELAYON · CRS SIGNAL ENGINE
+ * ELAYON · CRS SIGNAL ENGINE v5
  * app.js
  *
- * Extração contextual de presença vocal
- * ------------------------------------------------------------
- * OBJETIVO:
- * Gerar JSON rico de dinâmica vocal/prosódica
- * para IA contextual replicar:
+ * Mantém:
+ * - memória contextual
+ * - classificação
+ * - guidance
+ * - baseline
+ * - detecção relacional
  *
- * - ritmo
- * - intenção
- * - continuidade
- * - sustentação
- * - tensão
- * - presença
- * - comportamento temporal da fala
+ * Adiciona:
+ * - análise temporal real
+ * - timeline prosódica
+ * - sustentação vocálica
+ * - dinâmica de intenção
+ * - coerência temporal
+ * - ataques vocais
+ * - presença harmônica
+ * - explicabilidade
  *
- * NÃO:
- * - detector emocional
- * - detector de mentira
- * - diagnóstico psicológico
+ * ============================================================
+ * INSTALL
+ * ============================================================
  *
- * ------------------------------------------------------------
- * REQUISITOS:
+ * npm install express multer cors axios meyda node-wav
  *
- * npm install express multer meyda fft-js node-wav
- *
- * EXEC:
- * node app.js
- *
- * POST:
- * /analyze
- *
- * multipart/form-data
- * field: audio
- *
- * FORMATOS:
- * wav PCM recomendado
+ * ============================================================
  */
 
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
+const cors = require("cors");
+const axios = require("axios");
 const wav = require("node-wav");
+const fs = require("fs");
 const Meyda = require("meyda");
 
 const app = express();
-const upload = multer({ dest: "tmp/" });
+
+app.use(cors());
+app.use(express.json());
+
+const upload = multer({
+  dest: "tmp/"
+});
+
+/* ============================================================
+   ENV
+============================================================ */
+
+const SUPABASE_URL =
+  (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+
+const SUPABASE_ANON_KEY =
+  process.env.SUPABASE_ANON_KEY || "";
+
+/* ============================================================
+   MEMORY
+============================================================ */
+
+const MEMORY = {};
+
+/* ============================================================
+   CONFIG
+============================================================ */
+
+const FRAME_SIZE = 2048;
+const HOP_SIZE = 512;
+
+const SILENCE_THRESHOLD = 0.015;
 
 /* ============================================================
    HELPERS
 ============================================================ */
+
+function clamp(value, low, high) {
+  return Math.max(low, Math.min(high, value));
+}
+
+function toFloat(value, def = 0) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : def;
+}
+
+function toInt(value, def = 0) {
+  const n = parseInt(value);
+  return Number.isFinite(n) ? n : def;
+}
 
 function avg(arr) {
   if (!arr.length) return 0;
@@ -63,66 +99,124 @@ function std(arr) {
   const mean = avg(arr);
 
   const variance =
-    arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) /
+    arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) /
     arr.length;
 
   return Math.sqrt(variance);
 }
 
-function clamp(v, low, high) {
-  return Math.max(low, Math.min(high, v));
-}
+function deltaSeries(values) {
+  const deltas = [];
 
-function rms(buffer) {
-  let sum = 0;
-
-  for (let i = 0; i < buffer.length; i++) {
-    sum += buffer[i] * buffer[i];
+  for (let i = 1; i < values.length; i++) {
+    deltas.push(Math.abs(values[i] - values[i - 1]));
   }
 
-  return Math.sqrt(sum / buffer.length);
+  return deltas;
 }
 
-function spectralFlatness(amplitudeSpectrum) {
-  let geo = 1;
-  let arith = 0;
+function percentile(arr, p) {
+  if (!arr.length) return 0;
 
-  for (let i = 0; i < amplitudeSpectrum.length; i++) {
-    const val = amplitudeSpectrum[i] + 1e-12;
+  const sorted = [...arr].sort((a, b) => a - b);
 
-    geo *= val;
-    arith += val;
-  }
+  const idx = Math.floor((p / 100) * sorted.length);
 
-  geo = Math.pow(geo, 1 / amplitudeSpectrum.length);
-  arith /= amplitudeSpectrum.length;
-
-  return geo / arith;
+  return sorted[idx];
 }
 
 /* ============================================================
-   CONFIG
+   AUTH
 ============================================================ */
 
-const FRAME_SIZE = 2048;
-const HOP_SIZE = 512;
+function getBearerToken(req) {
+  const auth =
+    (req.headers.authorization || "").trim();
 
-const SILENCE_THRESHOLD = 0.015;
+  if (!auth.startsWith("Bearer ")) {
+    return null;
+  }
+
+  return auth.slice(7).trim();
+}
+
+async function validateSupabaseUser(token) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return [false, "configuração ausente", null];
+    }
+
+    const res = await axios.get(
+      `${SUPABASE_URL}/auth/v1/user`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`
+        },
+        timeout: 8000
+      }
+    );
+
+    return [true, "ok", res.data];
+  } catch (err) {
+    return [false, "token inválido", null];
+  }
+}
 
 /* ============================================================
-   CORE ANALYSIS
+   MEMORY
 ============================================================ */
 
-function analyzeAudio(audioBuffer, sampleRate) {
-  const frames = [];
+function getUserMemory(userId) {
+  if (!MEMORY[userId]) {
+    MEMORY[userId] = [];
+  }
 
+  return MEMORY[userId];
+}
+
+function storeMemory(userId, data) {
+  const history = getUserMemory(userId);
+
+  history.push(data);
+
+  MEMORY[userId] = history.slice(-10);
+}
+
+function buildBaseline(history) {
+  if (!history.length) {
+    return {
+      energy: 0,
+      continuity: 0,
+      oscillation: 0,
+      silence: 0,
+      intentional_presence: 0
+    };
+  }
+
+  return {
+    energy: avg(history.map(x => x.energy_pct)),
+    continuity: avg(history.map(x => x.continuity_pct)),
+    oscillation: avg(history.map(x => x.oscillation_pct)),
+    silence: avg(history.map(x => x.silence_pct)),
+    intentional_presence: avg(
+      history.map(x => x.intentional_presence || 0)
+    )
+  };
+}
+
+/* ============================================================
+   TEMPORAL EXTRACTION
+============================================================ */
+
+function extractFeatures(audioBuffer, sampleRate) {
   const timeline = [];
 
   const energies = [];
+  const centroids = [];
+  const flatnesses = [];
   const zcrs = [];
-  const spectralCentroids = [];
-  const spectralFlatnesses = [];
-  const pitches = [];
+  const mfccFrames = [];
 
   let silenceFrames = 0;
 
@@ -131,7 +225,10 @@ function analyzeAudio(audioBuffer, sampleRate) {
     i < audioBuffer.length - FRAME_SIZE;
     i += HOP_SIZE
   ) {
-    const frame = audioBuffer.slice(i, i + FRAME_SIZE);
+    const frame = audioBuffer.slice(
+      i,
+      i + FRAME_SIZE
+    );
 
     const features = Meyda.extract(
       [
@@ -139,8 +236,7 @@ function analyzeAudio(audioBuffer, sampleRate) {
         "zcr",
         "spectralCentroid",
         "spectralFlatness",
-        "mfcc",
-        "amplitudeSpectrum"
+        "mfcc"
       ],
       frame,
       {
@@ -151,58 +247,52 @@ function analyzeAudio(audioBuffer, sampleRate) {
 
     if (!features) continue;
 
-    const time = i / sampleRate;
+    const t = i / sampleRate;
 
     const energy = features.rms || 0;
 
-    const centroid = features.spectralCentroid || 0;
+    const silence =
+      energy < SILENCE_THRESHOLD;
+
+    if (silence) silenceFrames++;
+
+    const centroid =
+      features.spectralCentroid || 0;
 
     const flatness =
-      features.spectralFlatness ||
-      spectralFlatness(features.amplitudeSpectrum);
-
-    const zcr = features.zcr || 0;
-
-    const isSilence = energy < SILENCE_THRESHOLD;
-
-    if (isSilence) {
-      silenceFrames++;
-    }
+      features.spectralFlatness || 0;
 
     energies.push(energy);
-    zcrs.push(zcr);
-    spectralCentroids.push(centroid);
-    spectralFlatnesses.push(flatness);
+    centroids.push(centroid);
+    flatnesses.push(flatness);
+    zcrs.push(features.zcr || 0);
+
+    mfccFrames.push(features.mfcc || []);
 
     timeline.push({
-      t: Number(time.toFixed(3)),
-
+      t: Number(t.toFixed(3)),
       energy: Number(energy.toFixed(6)),
-
-      silence: isSilence,
-
-      spectral_centroid: Number(centroid.toFixed(2)),
-
-      spectral_flatness: Number(flatness.toFixed(6)),
-
-      zcr: Number(zcr.toFixed(6))
+      silence,
+      centroid: Number(centroid.toFixed(2)),
+      flatness: Number(flatness.toFixed(6)),
+      zcr: Number(
+        (features.zcr || 0).toFixed(6)
+      )
     });
-
-    frames.push(frame);
   }
 
   /* ============================================================
-     TEMPORAL DYNAMICS
+     CORE METRICS
   ============================================================ */
 
   const energyMean = avg(energies);
 
   const energyStd = std(energies);
 
-  const continuity =
+  const continuityPct =
     100 -
     clamp(
-      (energyStd / (energyMean + 1e-6)) * 100,
+      (energyStd / (energyMean + 0.0001)) * 100,
       0,
       100
     );
@@ -210,59 +300,44 @@ function analyzeAudio(audioBuffer, sampleRate) {
   const silencePct =
     (silenceFrames / timeline.length) * 100;
 
-  const oscillation =
+  const oscillationPct =
     clamp(
-      std(
-        energies.map((e, i) => {
-          if (i === 0) return 0;
-          return Math.abs(e - energies[i - 1]);
-        })
-      ) * 1000,
+      avg(deltaSeries(energies)) * 1200,
       0,
       100
     );
 
-  const stability =
+  const stabilityPct =
     100 -
-    clamp(
-      std(spectralCentroids) / 50,
-      0,
-      100
-    );
+    clamp(std(centroids) / 40, 0, 100);
 
-  const noise =
-    clamp(
-      avg(spectralFlatnesses) * 100,
-      0,
-      100
-    );
+  const noisePct =
+    clamp(avg(flatnesses) * 100, 0, 100);
 
   /* ============================================================
-     VOWEL HOLD DETECTION
+     VOWEL HOLD
   ============================================================ */
 
+  let sustainFrames = 0;
   let vowelHoldMs = 0;
 
-  let sustainCounter = 0;
-
-  for (let i = 0; i < energies.length; i++) {
+  for (let i = 1; i < energies.length; i++) {
     const stable =
       Math.abs(
-        spectralCentroids[i] -
-          (spectralCentroids[i - 1] || spectralCentroids[i])
+        centroids[i] - centroids[i - 1]
       ) < 120;
 
     const voiced =
       energies[i] > SILENCE_THRESHOLD;
 
     if (stable && voiced) {
-      sustainCounter++;
+      sustainFrames++;
     } else {
       vowelHoldMs +=
-        (sustainCounter * HOP_SIZE * 1000) /
+        (sustainFrames * HOP_SIZE * 1000) /
         sampleRate;
 
-      sustainCounter = 0;
+      sustainFrames = 0;
     }
   }
 
@@ -270,10 +345,11 @@ function analyzeAudio(audioBuffer, sampleRate) {
      ATTACK PROFILE
   ============================================================ */
 
-  let attacks = [];
+  const attacks = [];
 
   for (let i = 1; i < energies.length; i++) {
-    const delta = energies[i] - energies[i - 1];
+    const delta =
+      energies[i] - energies[i - 1];
 
     if (delta > 0.03) {
       attacks.push(delta);
@@ -284,128 +360,312 @@ function analyzeAudio(audioBuffer, sampleRate) {
     clamp(avg(attacks) * 1000, 0, 100);
 
   /* ============================================================
+     TEMPORAL TENDENCY
+  ============================================================ */
+
+  const firstHalf = avg(
+    energies.slice(0, energies.length / 2)
+  );
+
+  const secondHalf = avg(
+    energies.slice(energies.length / 2)
+  );
+
+  const energyTrend =
+    secondHalf - firstHalf;
+
+  /* ============================================================
      INTENTIONAL PRESENCE
   ============================================================ */
 
   const intentionalPresence =
-    (
-      continuity * 0.35 +
-      (100 - silencePct) * 0.20 +
-      stability * 0.20 +
-      (100 - noise) * 0.15 +
-      clamp(vowelHoldMs / 40, 0, 100) * 0.10
-    );
+    continuityPct * 0.30 +
+    stabilityPct * 0.20 +
+    (100 - silencePct) * 0.20 +
+    clamp(vowelHoldMs / 40, 0, 100) * 0.20 +
+    (100 - noisePct) * 0.10;
 
   /* ============================================================
-     INTERPRETIVE OBSERVATIONS
+     EXPLICABILITY
   ============================================================ */
 
-  const observations = [];
-
-  if (silencePct > 45) {
-    observations.push(
-      "silêncio elevado com possível processamento interno"
-    );
-  }
-
-  if (continuity > 70) {
-    observations.push(
-      "continuidade vocal sustentada"
-    );
-  }
-
-  if (oscillation > 55) {
-    observations.push(
-      "alta oscilação temporal de emissão"
-    );
-  }
-
-  if (vowelHoldMs > 1200) {
-    observations.push(
-      "sustentação vocálica prolongada"
-    );
-  }
-
-  if (attackIntensity > 40) {
-    observations.push(
-      "ataques vocais intensos"
-    );
-  }
-
-  if (noise > 60) {
-    observations.push(
-      "presença de tensão/noise espectral"
-    );
-  }
-
-  /* ============================================================
-     FINAL JSON
-  ============================================================ */
+  const explicability = {
+    silence_high: silencePct > 45,
+    continuity_low: continuityPct < 40,
+    oscillation_high: oscillationPct > 55,
+    sustained_vowels: vowelHoldMs > 1200,
+    strong_attacks: attackIntensity > 45,
+    spectral_noise: noisePct > 60,
+    stable_presence: stabilityPct > 70
+  };
 
   return {
-    meta: {
-      sample_rate: sampleRate,
-      duration_sec: Number(
-        (audioBuffer.length / sampleRate).toFixed(2)
-      ),
-      frame_size: FRAME_SIZE,
-      hop_size: HOP_SIZE
+    timeline,
+
+    metrics: {
+      duration_sec:
+        audioBuffer.length / sampleRate,
+
+      silence_pct: silencePct,
+
+      continuity_pct: continuityPct,
+
+      oscillation_pct: oscillationPct,
+
+      energy_pct:
+        clamp(energyMean * 300, 0, 100),
+
+      stability_pct: stabilityPct,
+
+      noise_pct: noisePct,
+
+      vowel_hold_ms: vowelHoldMs,
+
+      attack_intensity: attackIntensity,
+
+      intentional_presence:
+        intentionalPresence,
+
+      energy_trend: energyTrend
     },
 
-    dynamics: {
-      energy_mean: Number(energyMean.toFixed(6)),
-      energy_std: Number(energyStd.toFixed(6)),
-
-      continuity_pct: Number(
-        continuity.toFixed(2)
-      ),
-
-      silence_pct: Number(
-        silencePct.toFixed(2)
-      ),
-
-      oscillation_pct: Number(
-        oscillation.toFixed(2)
-      ),
-
-      stability_pct: Number(
-        stability.toFixed(2)
-      ),
-
-      noise_pct: Number(
-        noise.toFixed(2)
-      )
-    },
-
-    prosody: {
-      vowel_hold_ms: Number(
-        vowelHoldMs.toFixed(2)
-      ),
-
-      attack_intensity: Number(
-        attackIntensity.toFixed(2)
-      ),
-
-      intentional_presence: Number(
-        intentionalPresence.toFixed(2)
-      )
-    },
-
-    interpretive_observations: observations,
-
-    timeline
+    explicability
   };
 }
 
 /* ============================================================
-   ROUTES
+   SIGNAL DETECTION
+============================================================ */
+
+function detectSignalPresence(
+  durationSec,
+  silencePct
+) {
+  if (durationSec <= 0) {
+    return "SEM_SINAL";
+  }
+
+  if (
+    silencePct >= 96 &&
+    durationSec < 12
+  ) {
+    return "SEM_DADO";
+  }
+
+  return "VALIDO";
+}
+
+function detectReflectionPattern(
+  continuityPct,
+  energyPct,
+  oscillationPct,
+  silencePct,
+  vowelHoldMs
+) {
+  const score =
+    continuityPct * 0.35 +
+    energyPct * 0.15 +
+    (100 - silencePct) * 0.15 +
+    (100 - oscillationPct) * 0.15 +
+    clamp(vowelHoldMs / 25, 0, 100) * 0.20;
+
+  return [
+    score >= 52,
+    Number(score.toFixed(2))
+  ];
+}
+
+function detectFragmentation(
+  continuityPct,
+  oscillationPct,
+  silencePct
+) {
+  const score =
+    (100 - continuityPct) * 0.4 +
+    oscillationPct * 0.35 +
+    silencePct * 0.25;
+
+  return [
+    score >= 58,
+    Number(score.toFixed(2))
+  ];
+}
+
+function detectLowEnergy(
+  energyPct,
+  continuityPct
+) {
+  return (
+    energyPct < 20 &&
+    continuityPct > 35
+  );
+}
+
+/* ============================================================
+   CLASSIFIER
+============================================================ */
+
+function classifyState(metrics) {
+  const signal = detectSignalPresence(
+    metrics.duration_sec,
+    metrics.silence_pct
+  );
+
+  if (signal === "SEM_SINAL") {
+    return {
+      state: "Sem sinal",
+      mode: "invalido",
+      confidence: 0
+    };
+  }
+
+  if (signal === "SEM_DADO") {
+    return {
+      state: "Sem dado suficiente",
+      mode: "ausencia",
+      confidence: 0.95
+    };
+  }
+
+  const [reflective, reflectiveScore] =
+    detectReflectionPattern(
+      metrics.continuity_pct,
+      metrics.energy_pct,
+      metrics.oscillation_pct,
+      metrics.silence_pct,
+      metrics.vowel_hold_ms
+    );
+
+  if (reflective) {
+    return {
+      state: "Ritmo reflexivo",
+      mode: "reflexao",
+      confidence:
+        reflectiveScore / 100
+    };
+  }
+
+  if (
+    detectLowEnergy(
+      metrics.energy_pct,
+      metrics.continuity_pct
+    )
+  ) {
+    return {
+      state: "Fluxo de baixa emissão",
+      mode: "baixa_energia",
+      confidence: 0.72
+    };
+  }
+
+  const [frag, fragScore] =
+    detectFragmentation(
+      metrics.continuity_pct,
+      metrics.oscillation_pct,
+      metrics.silence_pct
+    );
+
+  if (frag) {
+    return {
+      state: "Fluxo fragmentado",
+      mode: "fragmentacao",
+      confidence: fragScore / 100
+    };
+  }
+
+  if (
+    metrics.stability_pct > 70 &&
+    metrics.continuity_pct > 50
+  ) {
+    return {
+      state: "Fluxo contínuo",
+      mode: "estavel",
+      confidence: 0.88
+    };
+  }
+
+  return {
+    state: "Fluxo moderado",
+    mode: "moderado",
+    confidence: 0.6
+  };
+}
+
+/* ============================================================
+   GUIDANCE
+============================================================ */
+
+function buildInteractionGuidance(mode) {
+  const guides = {
+    reflexao:
+      "Permitir pausas naturais e continuidade de elaboração.",
+
+    fragmentacao:
+      "Reduzir densidade cognitiva e operar progressivamente.",
+
+    baixa_energia:
+      "Manter suavidade relacional sem inferência emocional.",
+
+    estavel:
+      "Fluxo estável com possibilidade de maior densidade.",
+
+    moderado:
+      "Operar com clareza e alinhamento gradual.",
+
+    ausencia:
+      "Sem emissão suficiente para inferência contextual.",
+
+    invalido:
+      "Captação insuficiente."
+  };
+
+  return (
+    guides[mode] ||
+    "Operar com prudência contextual."
+  );
+}
+
+/* ============================================================
+   HEALTH
+============================================================ */
+
+app.get("/health", (_, res) => {
+  res.json({
+    ok: true,
+    service: "ELAYON_CRS",
+    version: "v5_temporal_signal_engine"
+  });
+});
+
+/* ============================================================
+   MAIN ANALYSIS
 ============================================================ */
 
 app.post(
-  "/analyze",
+  "/api/crs/analisar",
   upload.single("audio"),
   async (req, res) => {
     try {
+      const token =
+        getBearerToken(req);
+
+      if (!token) {
+        return res.status(401).json({
+          ok: false,
+          error: "token ausente"
+        });
+      }
+
+      const [valid, reason, user] =
+        await validateSupabaseUser(token);
+
+      if (!valid) {
+        return res.status(401).json({
+          ok: false,
+          error: reason
+        });
+      }
+
       if (!req.file) {
         return res.status(400).json({
           ok: false,
@@ -413,24 +673,73 @@ app.post(
         });
       }
 
-      const buffer = fs.readFileSync(req.file.path);
+      const buffer =
+        fs.readFileSync(req.file.path);
 
-      const decoded = wav.decode(buffer);
+      const decoded =
+        wav.decode(buffer);
 
-      const sampleRate = decoded.sampleRate;
+      const sampleRate =
+        decoded.sampleRate;
 
-      const channelData = decoded.channelData[0];
+      const audioBuffer =
+        decoded.channelData[0];
 
-      const result = analyzeAudio(
-        channelData,
-        sampleRate
-      );
+      const extracted =
+        extractFeatures(
+          audioBuffer,
+          sampleRate
+        );
+
+      const history =
+        getUserMemory(user.id);
+
+      const baseline =
+        buildBaseline(history);
+
+      const result =
+        classifyState(
+          extracted.metrics
+        );
+
+      storeMemory(user.id, {
+        ...extracted.metrics
+      });
 
       fs.unlinkSync(req.file.path);
 
       return res.json({
         ok: true,
-        analysis: result
+
+        auth: {
+          user_id: user.id,
+          email: user.email
+        },
+
+        estado_detectado: {
+          nome: result.state,
+          modo: result.mode,
+          confianca:
+            Number(
+              result.confidence.toFixed(2)
+            )
+        },
+
+        baseline_memoria: baseline,
+
+        relatorio:
+          extracted.metrics,
+
+        explicabilidade:
+          extracted.explicability,
+
+        sugestao_interacao:
+          buildInteractionGuidance(
+            result.mode
+          ),
+
+        timeline:
+          extracted.timeline
       });
     } catch (err) {
       console.error(err);
@@ -444,25 +753,14 @@ app.post(
 );
 
 /* ============================================================
-   HEALTH
-============================================================ */
-
-app.get("/health", (_, res) => {
-  res.json({
-    ok: true,
-    service: "ELAYON_SIGNAL_ENGINE",
-    mode: "prosodic_contextual_analysis"
-  });
-});
-
-/* ============================================================
    START
 ============================================================ */
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+  process.env.PORT || 8000;
 
 app.listen(PORT, () => {
   console.log(
-    `ELAYON SIGNAL ENGINE running at ${PORT}`
+    `ELAYON CRS v5 running on ${PORT}`
   );
 });
