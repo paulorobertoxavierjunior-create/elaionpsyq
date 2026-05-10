@@ -566,3 +566,291 @@ btnGoPsy.onclick = () => {
 btnNew.onclick = () => {
   location.reload();
 };
+
+/* ════════════════════════════════════════════════════════
+   ELAYON PSI-Q • ÁREA DO PSICÓLOGO
+════════════════════════════════════════════════════════ */
+
+const psyNameEl     = document.getElementById('psyName');
+const psyCrpEl      = document.getElementById('psyCrp');
+
+const btnSavePsy    = document.getElementById('btnSavePsy');
+const btnReload     = document.getElementById('btnReload');
+
+const btnBuild      = document.getElementById('btnBuild');
+const btnCopy       = document.getElementById('btnCopy');
+const btnDownload   = document.getElementById('btnDownload');
+
+const listEl        = document.getElementById('list');
+const outEl         = document.getElementById('out');
+
+let selectedSession = null;
+let generatedJSON   = null;
+
+/* ════════════════════════════════════════════════════════
+   SALVAR PSICÓLOGO
+════════════════════════════════════════════════════════ */
+
+if (btnSavePsy) {
+
+  btnSavePsy.onclick = () => {
+
+    const psy = {
+      nome: psyNameEl.value,
+      crp: psyCrpEl.value
+    };
+
+    localStorage.setItem(
+      'elayon_psy_profile',
+      JSON.stringify(psy)
+    );
+
+    alert('Identificação salva localmente.');
+  };
+}
+
+/* ════════════════════════════════════════════════════════
+   CARREGAR PERFIL
+════════════════════════════════════════════════════════ */
+
+(function loadPsychologistProfile(){
+
+  const raw = localStorage.getItem('elayon_psy_profile');
+
+  if (!raw) return;
+
+  try {
+
+    const psy = JSON.parse(raw);
+
+    if (psyNameEl) psyNameEl.value = psy.nome || '';
+    if (psyCrpEl) psyCrpEl.value = psy.crp || '';
+
+  } catch(e) {
+    console.error(e);
+  }
+
+})();
+
+/* ════════════════════════════════════════════════════════
+   RECARREGAR SESSÕES
+════════════════════════════════════════════════════════ */
+
+function loadSessions() {
+
+  if (!listEl) return;
+
+  listEl.innerHTML = '';
+
+  let sessions = [];
+
+  /* tenta múltiplas sessões */
+  const rawMulti = localStorage.getItem('elayon_sessions');
+
+  if (rawMulti) {
+
+    try {
+      sessions = JSON.parse(rawMulti);
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  /* fallback para sessão única */
+  const rawSingle = localStorage.getItem('elayon_last_session');
+
+  if (
+    sessions.length === 0 &&
+    rawSingle
+  ) {
+
+    try {
+      sessions.push(JSON.parse(rawSingle));
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  if (!sessions.length) {
+
+    listEl.innerHTML = `
+      <div class="empty">
+        Nenhuma sessão encontrada.
+      </div>
+    `;
+
+    return;
+  }
+
+  sessions.reverse().forEach((session, index) => {
+
+    const card = document.createElement('div');
+    card.className = 'sessionCard';
+
+    const symbolic = session.leitura_simbolica || {};
+
+    card.innerHTML = `
+      <div class="sessionTop">
+        <div>
+          <h3>Sessão ${index + 1}</h3>
+          <p>
+            ${new Date(session.timestamp).toLocaleString('pt-BR')}
+          </p>
+        </div>
+
+        <button class="primary selectBtn">
+          Selecionar
+        </button>
+      </div>
+
+      <div class="sessionGrid">
+
+        <div>
+          <span>Intenção</span>
+          <b>${symbolic.intention || '-'}</b>
+        </div>
+
+        <div>
+          <span>Tonalidade</span>
+          <b>${symbolic.tonality || '-'}</b>
+        </div>
+
+        <div>
+          <span>Consistência</span>
+          <b>${symbolic.consistency || '-'}</b>
+        </div>
+
+        <div>
+          <span>Pressão</span>
+          <b>${symbolic.pressure || '-'}</b>
+        </div>
+
+      </div>
+    `;
+
+    const btn = card.querySelector('.selectBtn');
+
+    btn.onclick = () => {
+
+      selectedSession = session;
+
+      document
+        .querySelectorAll('.sessionCard')
+        .forEach(el => el.classList.remove('active'));
+
+      card.classList.add('active');
+    };
+
+    listEl.appendChild(card);
+  });
+}
+
+if (btnReload) {
+  btnReload.onclick = loadSessions;
+}
+
+/* ════════════════════════════════════════════════════════
+   GERAR JSON ANONIMIZADO
+════════════════════════════════════════════════════════ */
+
+if (btnBuild) {
+
+  btnBuild.onclick = () => {
+
+    if (!selectedSession) {
+      alert('Selecione uma sessão primeiro.');
+      return;
+    }
+
+    generatedJSON = {
+
+      protocolo: 'ELAYON-PSIQ-ANON',
+
+      gerado_em: new Date().toISOString(),
+
+      revisado_por: {
+        crp: psyCrpEl.value || null
+      },
+
+      sessao: {
+
+        timestamp: selectedSession.timestamp,
+
+        duracao_segundos:
+          selectedSession.duracao_segundos,
+
+        metricas:
+          selectedSession.metricas,
+
+        leitura_simbolica:
+          selectedSession.leitura_simbolica,
+
+        assinatura_presenca:
+          selectedSession.assinatura_presenca
+      }
+    };
+
+    outEl.value = JSON.stringify(
+      generatedJSON,
+      null,
+      2
+    );
+
+    btnCopy.classList.remove('disabled');
+    btnDownload.classList.remove('disabled');
+  };
+}
+
+/* ════════════════════════════════════════════════════════
+   COPIAR
+════════════════════════════════════════════════════════ */
+
+if (btnCopy) {
+
+  btnCopy.onclick = async () => {
+
+    if (!generatedJSON) return;
+
+    await navigator.clipboard.writeText(
+      JSON.stringify(generatedJSON, null, 2)
+    );
+
+    alert('JSON copiado.');
+  };
+}
+
+/* ════════════════════════════════════════════════════════
+   DOWNLOAD
+════════════════════════════════════════════════════════ */
+
+if (btnDownload) {
+
+  btnDownload.onclick = () => {
+
+    if (!generatedJSON) return;
+
+    const blob = new Blob(
+      [JSON.stringify(generatedJSON, null, 2)],
+      { type:'application/json' }
+    );
+
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+
+    a.href = url;
+
+    a.download =
+      `elayon_relatorio_${Date.now()}.json`;
+
+    a.click();
+
+    URL.revokeObjectURL(url);
+  };
+}
+
+/* ════════════════════════════════════════════════════════
+   AUTOLOAD
+════════════════════════════════════════════════════════ */
+
+loadSessions();
